@@ -2,7 +2,7 @@ import os
 import argparse
 import torch
 from torch.utils.data import DataLoader
-
+import torch.nn.functional as Func
 from src.dataset import CUB as Dataset
 from src.sampler import Sampler
 from src.train_sampler import Train_Sampler
@@ -130,6 +130,8 @@ def train(args):
                 label = label_shot.index(label_query[j])
                 labels.append(label)
             labels = torch.tensor(labels).cuda()
+            del data, label
+            torch.cuda.empty_cache()
 
             """ TODO 2 ( Same as above TODO 2 ) """
             """ Train the model 
@@ -146,9 +148,11 @@ def train(args):
             #YOUR CODE
 
             """ TODO 2 END """
-            f1 = torch.Tensor([28, 28, 2])
-            f2 = torch.Tensor([10, 40, 5])
-            logits = square_euclidean_metric(f1, f2)
+            proto = model(data_shot)
+            proto = proto.reshape(args.kshot, args.nway, -1).mean(dim=0)
+            query = model(data_query)
+            logits = square_euclidean_metric(query, proto)
+            loss = Func.cross_entropy(logits, label)
             acc = count_acc(logits, labels)
 
             tl.add(loss.item())
@@ -158,6 +162,15 @@ def train(args):
             optimizer.step()
 
             proto = None; logits = None; loss = None
+            del data_shot
+            del data_query
+            del label_shot
+            del label_query
+            del labels
+            del proto
+            del logits
+            del loss
+            torch.cuda.empty_cache()
 
         if (i+1) % PRINT_FREQ == 0:
             print('train {}, loss={:.4f} acc={:.4f}'.format(i+1, tl.item(), ta.item()))
@@ -167,7 +180,7 @@ def train(args):
             ta = None
             tl = Averager()
             ta = Averager()
-
+        
         # validation start
         if (i+1) % VAL_FREQ == 0:
             print('validation start')
@@ -191,6 +204,8 @@ def train(args):
                             label = label_shot.index(label_query[j])
                             labels.append(label)
                         labels = torch.tensor(labels).cuda()
+                        del data, label
+                        torch.cuda.empty_cache()
 
                         """ TODO 2 ( Same as above TODO 2 ) """
                         """ Train the model 
@@ -207,13 +222,27 @@ def train(args):
                         #YOUR CODE
 
                         """ TODO 2 END """
-
+                        proto = model(data_shot)
+                        proto = proto.reshape(args.kshot, args.nway, -1).mean(dim=0)
+                        query = model(data_query)
+                        logits = square_euclidean_metric(query, proto)
+                        loss = Func.cross_entropy(logits, label)
                         acc = count_acc(logits, labels)
 
                         vl.add(loss.item())
                         va.add(acc)
+                        del data_shot
+                        del data_query
+                        del label_shot
+                        del label_query
+                        del labels
+                        torch.cuda.empty_cache()
 
                         proto = None; logits = None; loss = None
+                        del proto
+                        del logits
+                        del loss
+                        torch.cuda.empty_cache()
 
                 print('val accuracy mean : %.4f' % va.item())
                 print('val loss mean : %.4f' % vl.item())
@@ -243,7 +272,7 @@ if __name__ == '__main__':
                         help='number of data in each class in the support set (1 or 5)')
     parser.add_argument('--query', '--q', default=20, type=int, help='number of query data')
     parser.add_argument('--ntest', default=100, type=int, help='number of tests')
-    parser.add_argument('--gpus', type=int, nargs='+', default=0)
+    parser.add_argument('--gpus', type=int, nargs='+', default=1)
     parser.add_argument('--test_mode', type=int, default=0, help="if you want to test the model, change the value to 1")
 
     args = parser.parse_args()
@@ -251,8 +280,9 @@ if __name__ == '__main__':
     if not os.path.isdir('checkpoints'):
         os.mkdir('checkpoints')
 
-    torch.cuda.set_device(args.gpus)
-    #torch.cuda.set_device(0)
+    #torch.cuda.set_device(args.gpus)
+    device = torch.device(f'cuda:{0}' if torch.cuda.is_available() else 'cpu')
+    torch.cuda.set_device(device)
 
     train(args)
 
